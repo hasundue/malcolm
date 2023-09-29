@@ -6,7 +6,8 @@ import { basename } from "https://deno.land/std@0.201.0/path/mod.ts";
 import * as log from "https://deno.land/std@0.201.0/log/mod.ts";
 import { getLogger } from "https://deno.land/std@0.201.0/log/mod.ts";
 import {
-  normalizePath,
+  pathToSpecifier,
+  REGEXP_SOURCE,
   REGEXP_TEST,
   resolveTestScript,
   resolveTestScriptAll,
@@ -78,29 +79,39 @@ addEventListener("message", async (msg: MessageEvent<WorkerOptions>) => {
   const watcher = Deno.watchFs(root);
 
   for await (const event of watcher) {
-    const specifiers = event.paths
-      .filter((path) => REGEXP_TEST.test(basename(path)))
-      .map(normalizePath);
+    if (event.kind === "access" || event.kind === "other") {
+      continue;
+    }
+    const specifiers = event.paths.map(pathToSpecifier)
+      .filter((s) => REGEXP_SOURCE.test(basename(s)));
     if (!specifiers.length) {
       continue;
     }
+    log.debug("Worker found relevant event:", event);
     if (event.kind === "create") {
       const newTests = await Promise.all(
         specifiers
-          .map((p) => resolveTestScript(p)),
+          .filter((s) => REGEXP_TEST.test(basename(s)))
+          .filter((s) => !tests.some((t) => t.specifier === s))
+          .map((s) => resolveTestScript(s)),
       );
+      if (!newTests.length) {
+        continue;
+      }
       tests = intersect(tests, newTests);
       log.debug("Worker resolved new tests:", newTests);
     }
     if (event.kind === "remove") {
-      const removedTests = tests.filter((t) => specifiers.includes(t.path));
+      const removedTests = tests.filter((t) =>
+        specifiers.includes(t.specifier)
+      );
       tests = withoutAll(tests, removedTests);
       log.debug("Worker removed tests:", removedTests);
     }
     if (event.kind === "modify") {
       const targets = tests
         .filter((t) => intersect(t.modules, specifiers).length)
-        .map((t) => t.path);
+        .map((t) => t.specifier);
       if (!targets.length) {
         continue;
       }
@@ -109,12 +120,8 @@ addEventListener("message", async (msg: MessageEvent<WorkerOptions>) => {
         args: ["test", ...args, ...targets],
         cwd: root,
       });
-      try {
-        const output = await command.output();
-        postMessage(output);
-      } catch (err) {
-        postMessage(err);
-      }
+      const output = await command.output();
+      postMessage(output);
     }
   }
 });

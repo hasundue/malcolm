@@ -13,13 +13,16 @@ import { walk } from "https://deno.land/std@0.201.0/fs/mod.ts";
 export const GLOB_TEST = "{*_,*.,}test.{ts, tsx, mts, js, mjs, jsx}";
 export const REGEXP_TEST = globToRegExp(GLOB_TEST);
 
-export function normalizePath(path: string): string {
-  return toFileUrl(resolve(path)).toString();
+export const GLOB_SOURCE = "*.{ts, tsx, mts, js, mjs, jsx}";
+export const REGEXP_SOURCE = globToRegExp(GLOB_SOURCE);
+
+export function pathToSpecifier(path: string): string {
+  return toFileUrl(resolve(path)).href;
 }
 
-export async function listLocalModules(scriptPath: string): Promise<string[]> {
+export async function listLocalModules(specifier: string): Promise<string[]> {
   const graph = await createGraph(
-    toFileUrl(resolve(scriptPath)).toString(),
+    specifier,
     {
       load(specifier) {
         return specifier.startsWith("file:///")
@@ -34,13 +37,15 @@ export async function listLocalModules(scriptPath: string): Promise<string[]> {
 }
 
 export type TestScript = {
-  path: string;
+  specifier: string;
   modules: string[];
 };
 
-export async function resolveTestScript(path: string): Promise<TestScript> {
-  const modules = await listLocalModules(path);
-  return { path: path, modules };
+export async function resolveTestScript(
+  specifier: string,
+): Promise<TestScript> {
+  const modules = await listLocalModules(specifier);
+  return { specifier, modules };
 }
 
 export async function resolveTestScriptAll(root = "."): Promise<TestScript[]> {
@@ -51,7 +56,7 @@ export async function resolveTestScriptAll(root = "."): Promise<TestScript[]> {
   });
   const promises: Promise<TestScript>[] = [];
   for await (const { path } of iter) {
-    promises.push(resolveTestScript(path));
+    promises.push(resolveTestScript(pathToSpecifier(path)));
   }
   return Promise.all(promises);
 }
